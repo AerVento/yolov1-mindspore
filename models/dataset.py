@@ -16,10 +16,11 @@ def generator(images_path, labels_path):
         image_path = os.path.join(images_path, img_name + ".jpg")
         image = cv2.imread(image_path)
         # 图像预处理：调整大小和归一化
-        image = cv2.resize(image, (2560, 1440))
+        image = cv2.resize(image, (448, 448))
         image = image.astype(np.float32) / 255.0
         image_tensor = Tensor(image, mindspore.float32)
-        image_tensor = mnp.transpose(image_tensor, (2, 1, 0)) # 将张量通道从(1440, 2560, 3)改为(3, 2560, 1440)
+        image_tensor = mnp.transpose(image_tensor, (2, 1, 0))  # 将张量通道从(1440, 2560, 3)改为(3, 2560, 1440)
+        image_tensor = mnp.expand_dims(image_tensor, axis=0)
         # 读取标签数据
         label_path = os.path.join(labels_path, img_name + ".txt")
         label = []
@@ -32,7 +33,8 @@ def generator(images_path, labels_path):
                     # 转为Tensor，并加入总标签
                     label.append(mnp.array(rect_info))
 
-        yield image_tensor, mnp.array(label)
+        label_tensor = mnp.array(label)
+        yield image_tensor, label_tensor
 
 
 def create_dataset(dir_path):
@@ -47,5 +49,5 @@ def create_dataset(dir_path):
             classes.append(line.strip())
 
     # 数据集迭代器
-    dataset = GeneratorDataset(source=lambda: generator(images_path, labels_path), column_names=["image", "label"])
+    dataset = GeneratorDataset(source=list(generator(images_path, labels_path)), column_names=["data", "label"])
     return dataset, classes
