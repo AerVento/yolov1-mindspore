@@ -107,29 +107,30 @@ class Yolo1(nn.Cell):
         return x
 
 
+def compute_iou(box1: Tensor, box2: Tensor):  # box1(2,4)  box2(1,4)
+    center_x_1, center_y_1, w_1, h_1 = box1
+    center_x_2, center_y_2, w_2, h_2 = box2
+    area1 = w_1 * h_1
+    area2 = w_2 * h_2
+
+    delta_x = np.abs(center_x_1 - center_x_2)
+    delta_y = np.abs(center_y_1 - center_y_2)
+
+    if delta_x > w_1 + w_2 or delta_y > h_1 + h_2:
+        return 0
+
+    inter_x = w_1 + w_2 - delta_x
+    inter_y = h_1 + h_2 - delta_y
+    inter = inter_x * inter_y
+
+    iou = inter / (area1 + area2 - inter)
+    return iou
+
+
 class YoloLoss(nn.LossBase):
     def __init__(self, reduction='mean'):
         super(YoloLoss, self).__init__(reduction)
         self.abs = ops.Abs()
-
-    def compute_iou(self, box1: Tensor, box2: Tensor):  # box1(2,4)  box2(1,4)
-        center_x_1, center_y_1, w_1, h_1 = box1
-        center_x_2, center_y_2, w_2, h_2 = box2
-        area1 = w_1 * h_1
-        area2 = w_2 * h_2
-
-        delta_x = np.abs(center_x_1 - center_x_2)
-        delta_y = np.abs(center_y_1 - center_y_2)
-
-        if delta_x > w_1 + w_2 or delta_y > h_1 + h_2:
-            return 0
-
-        inter_x = w_1 + w_2 - delta_x
-        inter_y = h_1 + h_2 - delta_y
-        inter = inter_x * inter_y
-
-        iou = inter / (area1 + area2 - inter)
-        return iou
 
     def construct(self, predict: Tensor, target: Tensor):
         S = 7
@@ -149,8 +150,8 @@ class YoloLoss(nn.LossBase):
                     pred_rect_2 = predict_tensor[5:][:4]
                     conf_2 = predict_tensor[9]
 
-                    iou_1 = self.compute_iou(rect, pred_rect_1)
-                    iou_2 = self.compute_iou(rect, pred_rect_2)
+                    iou_1 = compute_iou(rect, pred_rect_1)
+                    iou_2 = compute_iou(rect, pred_rect_2)
 
                     center_x, center_y, w, h = rect
                     if iou_1 > iou_2:
@@ -190,4 +191,5 @@ class YoloLoss(nn.LossBase):
 
             delta = mnp.square(type - pred_type)
             loss += mnp.sum(delta)
+        print(target)
         return loss

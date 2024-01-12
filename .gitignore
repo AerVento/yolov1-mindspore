@@ -106,6 +106,7 @@ venv.bak/
 # add
 .idea/
 
+/__pycache__/
 /videos/
 /data/
 /checkpoint/

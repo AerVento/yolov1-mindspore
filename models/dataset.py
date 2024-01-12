@@ -49,5 +49,5 @@ def create_dataset(dir_path):
             classes.append(line.strip())
 
     # 数据集迭代器
-    dataset = GeneratorDataset(source=list(generator(images_path, labels_path)), column_names=["data", "label"])
+    dataset = GeneratorDataset(source=lambda: generator(images_path, labels_path), column_names=["data", "label"])
     return dataset, classes
