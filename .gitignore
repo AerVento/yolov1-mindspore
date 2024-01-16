@@ -104,9 +104,10 @@ venv.bak/
 .mypy_cache/
 
 # add
-.idea/
+/.idea/
 
-/__pycache__/
+/.idea/
+/models/__pycache__/
 /videos/
 /data/
 /checkpoint/

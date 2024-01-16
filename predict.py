@@ -5,6 +5,13 @@ from mindspore import Tensor
 import mindspore.numpy as mnp
 from models.yolo import Yolo1, compute_iou
 
+classes = [
+    'T_body',
+    'T_head',
+    'CT_body',
+    'CT_head'
+]
+
 # 检查点
 ckpt_save_dir = "checkpoint"
 load_checkpoint = "yolo_4-1_399.ckpt"
@@ -26,58 +33,52 @@ image_tensor = mnp.expand_dims(image_tensor, axis=0)
 output = net(image_tensor)
 
 # 输出处理
-type_val = 0.5 # 分类的阈值
-conf_val = 0.5 # 置信度阈值
-iou_val = 0.6 # iou阈值
-divide = [[], [], [], []]
-maxes = [0, 0, 0, 0]
-max_scores = [0, 0, 0, 0]
+conf_thres = 0.38  # 置信度阈值
+iou_thres = 0.01  # iou阈值
+
+# 所有置信度达到阈值的框
+total = []
 for i in range(7):
     for j in range(7):
         tensor = output[i][j]
-        types = tensor[10:]
-
-        detected = -1
-        for k in range(4):
-            if types[k] > type_val:
-                detected = k
-
-
-        if detected == -1:
-            continue
-
         rect_1 = tensor[:4]
         conf_1 = tensor[4:][:1]
         rect_2 = tensor[5:][:4]
         conf_2 = tensor[9:][:1]
+        types: Tensor = tensor[10:]
 
-        if conf_1 > max_scores[detected]:
-            max_scores[detected] = conf_1
-            maxes[detected] = rect_1
+        if conf_1 > conf_2 and conf_1 > conf_thres:
+            # 某一个类别的总概率
+            types_pr = types * conf_1
+            total.append((rect_1, conf_1, types_pr))
+        if conf_2 > conf_1 and conf_2 > conf_thres:
+            types_pr = types * conf_2
+            total.append((rect_2, conf_2, types_pr))
 
-        if conf_2 > max_scores[detected]:
-            max_scores[detected] = conf_2
-            maxes[detected] = rect_2
+total = sorted(total, key=lambda x: x[1], reverse=True)  # 按置信度从大到小排序
+filtered = []  # 经过非极大化抑制之后剩下来的框
+while len(total) > 0:
+    # 将置信度最大的元素放进去
+    max_elem = total.pop(0)
+    rect_max, conf_max, types_max = max_elem
+    filtered.append((rect_max, types_max))
+    # 移除交并比过高的元素
+    i = 0
+    while i < len(total):
+        rect, conf, types = total[i]
+        iou = compute_iou(rect_max, rect)
 
-        divide[detected].append((i,j))
+        # 大于iou阈值，移除
+        if iou > iou_thres:
+            total.pop(i)
+        i += 1
 
-for k in range(4):
-    for i, j in divide[k]:
-        tensor = output[i][j]
-        rect_1 = tensor[:4]
-        rect_2 = tensor[5:][:4]
+for rect, types in filtered:
+    index = -1
+    for i in range(types.size):
+        if index == -1 or types[i] > types[index]:
+            index = i
 
-        iou_1 = compute_iou(rect_1, maxes[k])
-        iou_2 = compute_iou(rect_1, maxes[k])
-        if iou_1 > iou_val or iou_2 > iou_val:
-            divide[k].remove((i, j))
+    print(f"rect: {rect}, type: {classes[index]}")
 
-for k in range(4):
-    print(f"type {k}:\n")
-    for i, j in divide[k]:
-        tensor = output[i][j]
-        rect_1 = tensor[:4]
-        rect_2 = tensor[5:][:4]
-        print(f"{rect_1}\n")
-        print(f"{rect_2}\n")
 

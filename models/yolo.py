@@ -1,3 +1,5 @@
+import random
+
 import mindspore
 import mindspore.nn as nn
 from mindspore import Tensor
@@ -5,24 +7,22 @@ import mindspore.ops as ops
 import numpy as np
 import mindspore.numpy as mnp
 
+
 class Yolo1(nn.Cell):
     def __init__(self):
         super(Yolo1, self).__init__()
-
         # 第一层
         self.conv1 = nn.SequentialCell(
             nn.Conv2d(in_channels=3, out_channels=192, kernel_size=7, stride=2, pad_mode="same"),
             nn.LeakyReLU(),
             nn.MaxPool2d(kernel_size=2, stride=2, pad_mode="same")
         )
-
         # 第二层
         self.conv2 = nn.SequentialCell(
             nn.Conv2d(in_channels=192, out_channels=256, kernel_size=3, pad_mode="same"),
             nn.LeakyReLU(),
             nn.MaxPool2d(kernel_size=2, stride=2, pad_mode="same")
         )
-
         # 第三层
         self.conv3 = nn.SequentialCell(
             nn.Conv2d(in_channels=256, out_channels=128, kernel_size=1),
@@ -32,7 +32,6 @@ class Yolo1(nn.Cell):
             nn.LeakyReLU(),
             nn.MaxPool2d(kernel_size=2, stride=2, pad_mode="same")
         )
-
         # 第四层
         self.conv4 = nn.SequentialCell(
             *[nn.SequentialCell(
@@ -44,7 +43,6 @@ class Yolo1(nn.Cell):
             nn.LeakyReLU(),
             nn.MaxPool2d(kernel_size=2, stride=2, pad_mode="same")
         )
-
         # 第五层
         self.conv5 = nn.SequentialCell(
             *[nn.SequentialCell(
@@ -55,27 +53,22 @@ class Yolo1(nn.Cell):
             nn.Conv2d(in_channels=1024, out_channels=1024, kernel_size=3, stride=2, pad_mode="same"),
             nn.LeakyReLU()
         )
-
         # 第六层
         self.conv6 = nn.SequentialCell(
             nn.Conv2d(in_channels=1024, out_channels=1024, kernel_size=3, pad_mode="same"),
             nn.Conv2d(in_channels=1024, out_channels=1024, kernel_size=3, pad_mode="same"),
             nn.LeakyReLU()
         )
-
         # 展平层，为全连接层做准备
         self.flatten = nn.Flatten()
-
         # 第七层：全连接层
         self.fc1 = nn.SequentialCell(
             nn.Dense(in_channels=7*7*1024, out_channels=4096, activation="sigmoid")
         )
-
         # 第八层：全连接层
         self.fc2 = nn.SequentialCell(
             nn.Dense(in_channels=4096, out_channels=14*7*7, activation="sigmoid")
         )
-
         # 重整层：将输出的全连接层转化为7x7并有30个通道
         self.reshape = ops.Reshape()
 
@@ -136,13 +129,25 @@ class YoloLoss(nn.LossBase):
         S = 7
         lambda_coord = 5
         lambda_noobj = 0.5
-        loss = 0
+        loss_coord = 0
+        loss_object = 0
+        loss_class = 0
+        # 对于目标图像中的每个框，遍历所有的网格和每个网格生成的2个框，去找网格框和目标框iou最大的框，并标记。
+        positive_grids = []  # 正样本候选区域
+        for label in range(target.shape[0]):
+            center_x, center_y = target[label][1:][:2]
+            grid_x = np.floor(S * center_x)
+            grid_y = np.floor(S * center_y)
+
+            positive_grids.append((grid_x, grid_y))
+
         for i in range(7):
             for j in range(7):
-                for label in range(target.shape[0]):
+                # 当前单元格的张量输出
+                predict_tensor = predict[i][j]  # 长度为30的张量
+                if (i, j) in positive_grids:  # 这个格子存在物体，一定存在正样本
+                    label = positive_grids.index((i, j))
                     rect = target[label][1:]
-                    # 当前单元格的张量输出
-                    predict_tensor = predict[i][j]  # 长度为30的张量
                     # 预测框1
                     pred_rect_1 = predict_tensor[:4]
                     conf_1 = predict_tensor[4]
@@ -154,28 +159,36 @@ class YoloLoss(nn.LossBase):
                     iou_2 = compute_iou(rect, pred_rect_2)
 
                     center_x, center_y, w, h = rect
+                    # 根据iou谁大，谁作为正样本
                     if iou_1 > iou_2:
                         # 1 是正样本、2 是负样本
                         pred_center_x, pred_center_y, pred_w, pred_h = pred_rect_1
                         # 定位损失：中心
-                        loss += lambda_coord * (mnp.square(center_x - pred_center_x) + mnp.square(center_y - pred_center_y))
+                        loss_coord += lambda_coord * (
+                                    mnp.square(center_x - pred_center_x) + mnp.square(center_y - pred_center_y))
                         # 定位损失：宽高
-                        loss += lambda_coord * (mnp.square(mnp.sqrt(w) - mnp.sqrt(pred_w)) + mnp.square(mnp.sqrt(h) - mnp.sqrt(pred_h)))
+                        loss_coord += lambda_coord * (mnp.square(mnp.sqrt(w) - mnp.sqrt(pred_w)) + mnp.square(
+                            mnp.sqrt(h) - mnp.sqrt(pred_h)))
                         # 置信度损失
-                        loss += mnp.square(conf_1 - iou_1)
-                        loss += lambda_noobj * mnp.square(conf_2)
+                        loss_object += mnp.square(conf_1 - iou_1)
+                        loss_object += lambda_noobj * mnp.square(conf_2)
                     else:
                         # 2 是正样本、1 是负样本
                         pred_center_x, pred_center_y, pred_w, pred_h = pred_rect_2
                         # 定位损失：中心
-                        loss += lambda_coord * (
-                                    mnp.square(center_x - pred_center_x) + mnp.square(center_y - pred_center_y))
+                        loss_coord += lambda_coord * (
+                                mnp.square(center_x - pred_center_x) + mnp.square(center_y - pred_center_y))
                         # 定位损失：宽高
-                        loss += lambda_coord * (mnp.square(mnp.sqrt(w) - mnp.sqrt(pred_w)) + mnp.square(
+                        loss_coord += lambda_coord * (mnp.square(mnp.sqrt(w) - mnp.sqrt(pred_w)) + mnp.square(
                             mnp.sqrt(h) - mnp.sqrt(pred_h)))
                         # 置信度损失
-                        loss += mnp.square(conf_2 - iou_2)
-                        loss += lambda_noobj * mnp.square(conf_1)
+                        loss_object += mnp.square(conf_2 - iou_2)
+                        loss_object += lambda_noobj * mnp.square(conf_1)
+                else:
+                    # 两个框都是负样本，则都只有置信度损失
+                    conf_1 = predict_tensor[4]
+                    conf_2 = predict_tensor[9]
+                    loss_object += lambda_noobj * mnp.square(conf_1) + lambda_noobj * mnp.square(conf_2)
 
         # 类别损失
         for label in range(target.shape[0]):
@@ -190,6 +203,6 @@ class YoloLoss(nn.LossBase):
             pred_type = predict[grid_x][grid_y][10:]
 
             delta = mnp.square(type - pred_type)
-            loss += mnp.sum(delta)
-        print(target)
-        return loss
+            loss_class += mnp.sum(delta)
+        print(f"loss_coord: {loss_coord}, loss_object: {loss_object}, loss_class: {loss_class}")
+        return loss_class + loss_object + loss_coord

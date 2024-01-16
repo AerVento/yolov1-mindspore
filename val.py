@@ -12,23 +12,17 @@ param_dict = mindspore.load_checkpoint(f"{ckpt_save_dir}/{load_checkpoint}")
 net = Yolo1()
 param_not_load, _ = mindspore.load_param_into_net(net, param_dict)
 print(f"params not loaded:{param_not_load}")
-# 优化器
-opt = nn.Adam(net.trainable_params())
 # 损失函数
 criterion = YoloLoss()
-# 数据集
+# 测试数据集
 dataset, classes = create_dataset("data")
 size = dataset.get_dataset_size()
 print(f"{size} images collected.")
-# 检查点
-config = CheckpointConfig(save_checkpoint_steps=size)
-# 模型
-epoch = 1
-model = Model(net, criterion, opt)
-model.fit(epoch, train_dataset=dataset, callbacks=[
-    ModelCheckpoint(prefix="yolo", directory="./checkpoint", config=config),
-    LossMonitor(1)
-])
-# 训练
-model.train(epoch, dataset)
-print("Training completed.")
+
+i = 0
+for image, label in dataset.create_tuple_iterator():
+    loss = criterion(net(image), label)
+    print(f"image_{i}: loss = {loss}")
+    i += 1
+
+print("Validate completed.")
